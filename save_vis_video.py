@@ -107,12 +107,6 @@ if __name__ == "__main__":
 
     repo_dir = os.getcwd()
 
-    # # Create the animation
-    # ani = animation.FuncAnimation(fig, animate, frames=len(gpx_files), interval=2000)
-
-    # # Save the animation as a video
-    # ani.save('animation.mp4', writer='ffmpeg')
-
     images = []
     for i in range(len(gpx_files)):
         img = animate(i)
