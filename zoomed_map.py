@@ -12,21 +12,26 @@ import imgkit
 from math import log2, cos, pi
 from geopy.geocoders import Nominatim
 
-def get_location_by_coordinates(geolocator, lat, long):
-    location = geolocator.reverse([lat, long])
-    return location.address
-
 class GarminActivity:
-    def __init__(self, time, points, location=None, activity_type="run"):
-        geolocator = Nominatim(user_agent="http")
+    CITIES = []
 
+    @classmethod
+    def get_cities(cls):
+        return cls.CITIES
+
+    def __init__(self, time, points, location=None, activity_type="run"):
         self.activity_type = activity_type
         self.time = time
-        self.location = location
         self.points = points
         self.has_location = False
 
-        if not location and points:
+        if not hasattr(self, "_city"):
+            self.parse_activity_data(points)
+
+    def parse_activity_data(self, points):
+        geolocator = Nominatim(user_agent="http")
+
+        if points:
             latitudes = [point[0] for point in self.points]
             longitudes = [point[1] for point in self.points]
 
@@ -45,36 +50,27 @@ class GarminActivity:
             zoom_lon = int(log2(360 / lon_dist / cos(pi * self.center_lat / 180))) + 1
             self.zoom = min(zoom_lat, zoom_lon)
 
-            self.address = get_location_by_coordinates(geolocator, self.center_lat, self.center_lon)
-            if len(self.address.split(",")) > 4:
-                self.city_region = self.address.split(",")[-5].strip()
-                self.state_prov = self.address.split(",")[-3].strip()
-                self.has_location = True
-            if len(self.address.split(",")) == 4:
-                self.city_region = self.address.split(",")[-3].strip()
-                self.state_prov = self.address.split(",")[-2].strip()
-                self.has_location = True
-            if len(self.address.split(",")) == 3:  
-                self.city_region = self.address.split(",")[0].strip()
-                self.state_prov = self.address.split(",")[1].strip()
+            city = self.get_city_by_coordinates(geolocator, self.center_lat, self.center_lon)
+            if not city == '':
                 self.has_location = True
             if self.has_location:
-                print(self.city_region)
-
-    def state(self):
-        if self.has_location:
-            return self.state_prov
-        return "None"
-    
-    def city(self):
-        if self.has_location:
-            return self.city_region
-        return "None"
+                if not city in self.CITIES:
+                    self.CITIES.append(city)
+                self._city = city
+                print(city)
     
     def min_max(self):
         if self.has_location:
             return self.lat_minmax, self.long_minmax
         return None, None
+
+    def get_city_by_coordinates(self, geolocator, lat, long):
+        location = geolocator.reverse([lat, long])
+        address = location.raw['address']
+
+        # Extract the city from the address using alternative keys
+        city = address.get('city', '') or address.get('town', '') or address.get('village', '') or ''
+        return city
 
 class FoliumMap:
     def __init__(self, center_lat=0, center_lon=0, zoom=2):
@@ -195,6 +191,8 @@ if __name__ == "__main__":
     # Create the map object
     vis_map = FoliumMap()
     vis_map.load_data(args.gpx_path)
+
+    print("Cities you ran in: ", GarminActivity.get_cities())
 
     vis_map.make_map(state=args.state, city=args.city)
     vis_map.save_map(args.state)
