@@ -14,12 +14,17 @@ from geopy.geocoders import Nominatim
 
 class GarminActivity:
     CITIES = []
+    STATES = []
 
     @classmethod
     def get_cities(cls):
         return cls.CITIES
 
-    def __init__(self, time, points, location=None, activity_type="run"):
+    @classmethod
+    def get_states(cls):
+        return cls.STATES
+
+    def __init__(self, time, points, activity_type="run"):
         self.activity_type = activity_type
         self.time = time
         self.points = points
@@ -50,27 +55,37 @@ class GarminActivity:
             zoom_lon = int(log2(360 / lon_dist / cos(pi * self.center_lat / 180))) + 1
             self.zoom = min(zoom_lat, zoom_lon)
 
-            city = self.get_city_by_coordinates(geolocator, self.center_lat, self.center_lon)
-            if not city == '':
+            state, city = self.get_location_by_coordinates(geolocator, self.center_lat, self.center_lon)
+            if not city == '' or not state == '':
                 self.has_location = True
-            if self.has_location:
-                if not city in self.CITIES:
-                    self.CITIES.append(city)
-                self._city = city
-                print(city)
+                if not city == '':
+                    self._city = city
+                    print(f"City: {city}")
+                    if not city in self.CITIES:
+                        self.CITIES.append(city)
+                if not state == '':
+                    self._state = state
+                    print(f"State: {state}")
+                    if not state in self.STATES:
+                        self.STATES.append(state)
+
+    # def get_city(self):
+    #     if hasattr(self, "_city"):
+    #         return self._city
     
     def min_max(self):
         if self.has_location:
             return self.lat_minmax, self.long_minmax
         return None, None
 
-    def get_city_by_coordinates(self, geolocator, lat, long):
+    def get_location_by_coordinates(self, geolocator, lat, long):
         location = geolocator.reverse([lat, long])
         address = location.raw['address']
 
         # Extract the city from the address using alternative keys
         city = address.get('city', '') or address.get('town', '') or address.get('village', '') or ''
-        return city
+        state_province = address.get('state', '') or address.get('province', '') or ''
+        return state_province, city
 
 class FoliumMap:
     def __init__(self, center_lat=0, center_lon=0, zoom=2):
@@ -80,15 +95,28 @@ class FoliumMap:
         self.activity_points = []
         self.activities = []
     
-    def make_map(self, state=None, city=None):
-        if not state == 'None' and len(self.activities) > 0:
+    def make_map(self, state='None', city='None'):
+
+        # If filtered by city or state
+        if (not state == 'None' or not city == 'None') and len(self.activities) > 0:
             current_activities = []
-            current_points = []
             lat_minmax = [None, None]
             long_minmax = [None, None]
             for activity in self.activities:
-                if state in activity.state():
-                    current_activities.append(activity)
+                applied = False
+                if hasattr(activity, "_city") and hasattr(activity, "_state"):
+                    if (city in activity._city or not city) and (state in activity._state or not state):
+                        current_activities.append(activity)
+                        applied = True
+                elif hasattr(activity, "_city"):
+                    if city in activity._city() or not city:
+                        current_activities.append(activity)
+                        applied = True
+                elif hasattr(activity, "_state"):
+                    if state in activity._state() or not state:
+                        current_activities.append(activity)
+                        applied = True
+                if applied:
                     if lat_minmax[0] == None or lat_minmax[1] == None or long_minmax[0] == None or long_minmax[1] == None:
                         lat_minmax, long_minmax = activity.min_max()
                     else:
@@ -102,39 +130,27 @@ class FoliumMap:
                         if long[1] > long_minmax[1]:
                             long_minmax[1] = long[1]
 
-                if city in activity.city():
-                    current_activities.append(activity)
-                    if lat_minmax[0] == None or lat_minmax[1] == None or long_minmax[0] == None or long_minmax[1] == None:
-                        lat_minmax, long_minmax = activity.min_max()
-                    else:
-                        lat, long = activity.min_max()
-                        if lat[0] < lat_minmax[0]:                    
-                            lat_minmax[0] = lat[0]
-                        if lat[1] > lat_minmax[1]:
-                            lat_minmax[1] = lat[1]
-                        if long[0] < long_minmax[0]:
-                            long_minmax[0] = long[0] 
-                        if long[1] > long_minmax[1]:
-                            long_minmax[1] = long[1]
+        if not (lat_minmax[0] == None or lat_minmax[1] == None or long_minmax[0] == None or long_minmax[1] == None):
+            self.center_lat = (sum(lat_minmax)) / 2
+            self.center_lon = (sum(long_minmax)) / 2
 
-            if not (lat_minmax[0] == None or lat_minmax[1] == None or long_minmax[0] == None or long_minmax[1] == None):
-                self.center_lat = (sum(lat_minmax)) / 2
-                self.center_lon = (sum(long_minmax)) / 2
+            # Calculate the distance between minimum and maximum coordinates
+            lat_dist = lat_minmax[1] - lat_minmax[0]
+            lon_dist = long_minmax[1] - long_minmax[0]
 
-                # Calculate the distance between minimum and maximum coordinates
-                lat_dist = lat_minmax[1] - lat_minmax[0]
-                lon_dist = long_minmax[1] - long_minmax[0]
+            # Calculate a reasonable zoom level based on the distance
+            zoom_lat = int(log2(360 / lat_dist)) + 1
+            zoom_lon = int(log2(360 / lon_dist / cos(pi * self.center_lat / 180))) + 1
+            self.zoom = min(zoom_lat, zoom_lon)
 
-                # Calculate a reasonable zoom level based on the distance
-                zoom_lat = int(log2(360 / lat_dist)) + 1
-                zoom_lon = int(log2(360 / lon_dist / cos(pi * self.center_lat / 180))) + 1
-                self.zoom = min(zoom_lat, zoom_lon)
-
-        self.map = folium.Map(location=[self.center_lat, self.center_lon], zoom_start=self.zoom)
+        self._map = folium.Map(location=[self.center_lat, self.center_lon], zoom_start=self.zoom)
         self.draw_points()
 
     def access_map(self):
-        return self.map
+        if hasattr(self, "_map"):
+            return self._map
+        else:
+            raise ValueError("Map hasn't been initialized yet")
 
     def load_data(self, gpx_path):
         # Find all .gpx files in the folder
@@ -151,10 +167,9 @@ class FoliumMap:
                 for track in gpx.tracks:
                     for segment in track.segments:
                         for point in segment.points:
-                            # Access individual data points (e.g., latitude, longitude, elevation, time)
                             lat = point.latitude
                             lon = point.longitude
-                            ele = point.elevation
+                            # ele = point.elevation
                             time = point.time
                             points.append((lat, lon))  # Append coordinates to the points list
     
@@ -177,7 +192,10 @@ class FoliumMap:
             end_point.add_to(self.map)
         
     def save_map(self, mapName="map"):
-        self.map.save('{}.html'.format(mapName))
+        if hasattr(self, "_map"):
+            self.save('{}.html'.format(mapName))
+        else:
+            raise ValueError("Map hasn't been initialized yet")
 
 if __name__ == "__main__":
     # Training settings
@@ -193,6 +211,7 @@ if __name__ == "__main__":
     vis_map.load_data(args.gpx_path)
 
     print("Cities you ran in: ", GarminActivity.get_cities())
+    print("States/Provinces you ran in: ", GarminActivity.get_states())
 
     vis_map.make_map(state=args.state, city=args.city)
     vis_map.save_map(args.state)
